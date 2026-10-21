@@ -74,79 +74,101 @@ def test_missing_token_raises():
             run(buxfer_server.make_buxfer_request("GET", "accounts"))
 
 
-# === add_transaction ===
+# === txSetTransaction: create (no transaction_id) ===
 
-def test_add_transaction_requires_fields():
-    assert "Description is required" in run(buxfer_server.add_transaction())
-    assert "Amount is required" in run(buxfer_server.add_transaction(description="x"))
+def test_set_transaction_create_requires_fields():
+    assert "Description is required" in run(buxfer_server.tx_set_transaction())
+    assert "Amount is required" in run(buxfer_server.tx_set_transaction(description="x"))
     assert "account_id or account_name" in run(
-        buxfer_server.add_transaction(description="x", amount="5")
+        buxfer_server.tx_set_transaction(description="x", amount="5")
     )
 
 
-def test_add_transaction_string_amount_response():
+def test_set_transaction_create_string_amount_response():
     """API echoing amount back as a string must not turn success into an error."""
     mock_result = {"response": {"id": 1, "description": "Coffee", "amount": "4.50",
                                 "type": "expense", "date": "2026-06-10",
                                 "accountName": "Cash", "status": "cleared"}}
     with patch.object(buxfer_server, "make_buxfer_request", AsyncMock(return_value=mock_result)):
-        out = run(buxfer_server.add_transaction(description="Coffee", amount="4.50", account_name="Cash"))
+        out = run(buxfer_server.tx_set_transaction(description="Coffee", amount="4.50", account_name="Cash"))
     assert "✅" in out
     assert "$4.50" in out
 
 
-def test_add_transaction_api_error():
+def test_set_transaction_create_api_error():
     with patch.object(buxfer_server, "make_buxfer_request",
                       AsyncMock(side_effect=ValueError("Buxfer API error: ERROR"))):
-        out = run(buxfer_server.add_transaction(description="x", amount="5", account_name="Cash"))
+        out = run(buxfer_server.tx_set_transaction(description="x", amount="5", account_name="Cash"))
     assert "❌" in out
 
 
-# === edit_transaction ===
+# === txSetTransaction: change (transaction_id) ===
 
-def test_edit_transaction_requires_id_and_field():
-    assert "transaction_id is required" in run(buxfer_server.edit_transaction())
-    assert "at least one field" in run(buxfer_server.edit_transaction(transaction_id="123"))
+def test_set_transaction_change_requires_a_field():
+    assert "at least one field" in run(buxfer_server.tx_set_transaction(transaction_id="123"))
+    assert "account_name only applies when creating" in run(
+        buxfer_server.tx_set_transaction(transaction_id="123", account_name="Cash")
+    )
 
 
-# === list_accounts ===
+def test_set_transaction_key_decides_endpoint():
+    """transaction_id present -> transaction_edit (patch); absent -> transaction_add."""
+    req = AsyncMock(return_value={"response": {"id": 7}})
+    with patch.object(buxfer_server, "make_buxfer_request", req):
+        run(buxfer_server.tx_set_transaction(transaction_id="7", tags="food"))
+        assert req.call_args.args[1] == "transaction_edit"
+        assert req.call_args.kwargs["data"] == {"id": "7", "tags": "food"}
 
-def test_list_accounts_string_balance():
+        run(buxfer_server.tx_set_transaction(description="x", amount="5", account_name="Cash"))
+        assert req.call_args.args[1] == "transaction_add"
+        assert req.call_args.kwargs["data"]["type"] == "expense"
+
+
+# === tool names (admin's docs/connector-tool-names.md) ===
+
+def test_tool_names_follow_connector_standard():
+    names = {t.name for t in run(buxfer_server.mcp.list_tools())}
+    assert names == {"txSetTransaction", "txAccounts", "txTransactions", "txBudgets", "txTags"}
+
+
+# === txAccounts ===
+
+def test_tx_accounts_string_balance():
     mock_result = {"response": {"accounts": [
         {"id": 1, "name": "Checking", "bank": "Bank", "balance": "100.25"},
         {"id": 2, "name": "Savings", "bank": "Bank", "balance": 50},
     ]}}
     with patch.object(buxfer_server, "make_buxfer_request", AsyncMock(return_value=mock_result)):
-        out = run(buxfer_server.list_accounts())
+        out = run(buxfer_server.tx_accounts())
     assert "$100.25" in out
     assert "Total Balance: $150.25" in out
 
 
-# === list_transactions ===
+# === txTransactions ===
 
-def test_list_transactions_single_page():
+def test_tx_transactions_single_page():
     mock_result = {"response": {"numTransactions": 1, "transactions": [
         {"id": 1, "description": "Coffee", "amount": 4.5, "type": "expense",
          "date": "2026-06-10", "accountName": "Cash"},
     ]}}
     with patch.object(buxfer_server, "make_buxfer_request", AsyncMock(return_value=mock_result)):
-        out = run(buxfer_server.list_transactions())
+        out = run(buxfer_server.tx_transactions())
     assert "Coffee" in out
     assert "$4.50" in out
 
 
-def test_list_transactions_untagged_filter():
+def test_tx_transactions_untagged_filter():
     mock_result = {"response": {"numTransactions": 2, "transactions": [
         {"id": 1, "description": "Tagged", "amount": 1, "type": "expense", "tags": "food"},
         {"id": 2, "description": "Untagged", "amount": 2, "type": "expense", "tags": ""},
     ]}}
     with patch.object(buxfer_server, "make_buxfer_request", AsyncMock(return_value=mock_result)):
-        out = run(buxfer_server.list_transactions(untagged=True))
+        out = run(buxfer_server.tx_transactions(untagged=True))
     assert "Untagged" in out
     assert "Tagged\n" not in out  # only the untagged txn rendered
 
 
-def test_list_transactions_type_filter_paginates():
+def test_tx_transactions_type_filter_paginates():
     """Client-side type filtering fetches all pages."""
     call_count = {"n": 0}
 
@@ -158,6 +180,6 @@ def test_list_transactions_type_filter_paginates():
         ]}}
 
     with patch.object(buxfer_server, "make_buxfer_request", fake_request):
-        out = run(buxfer_server.list_transactions(transaction_type="expense"))
+        out = run(buxfer_server.tx_transactions(transaction_type="expense"))
     assert call_count["n"] == 2  # 150 txns -> 2 pages
     assert "Page1" in out and "Page2" in out
