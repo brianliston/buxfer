@@ -103,27 +103,71 @@ async def make_buxfer_request(method, endpoint, params=None, data=None):
 
 # === MCP TOOLS ===
 
-@mcp.tool()
-async def add_transaction(description: str = "", amount: str = "", account_id: str = "", account_name: str = "", date: str = "", tags: str = "", transaction_type: str = "expense", status: str = "cleared") -> str:
-    """Add a new transaction to Buxfer with description, amount, account, date, tags, type (expense/income/transfer/loan/etc), and status (cleared/pending)."""
-    logger.info(f"Adding transaction: {description}")
-    
+def format_saved_transaction(txn, heading, fallback_id="N/A"):
+    """Format the transaction Buxfer echoes back after a create or change."""
+    response_text = f"✅ {heading}\n\n"
+    response_text += f"ID: {txn.get('id', fallback_id)}\n"
+    response_text += f"Description: {txn.get('description', 'N/A')}\n"
+    response_text += f"Amount: {fmt_amount(txn.get('amount', 0))}\n"
+    response_text += f"Type: {txn.get('type', 'N/A')}\n"
+    response_text += f"Date: {txn.get('date', 'N/A')}\n"
+    response_text += f"Account: {txn.get('accountName', 'N/A')}\n"
+    response_text += f"Status: {txn.get('status', 'N/A')}"
+
+    if txn.get('tags'):
+        response_text += f"\nTags: {txn.get('tags')}"
+
+    return response_text
+
+@mcp.tool(name="txSetTransaction")
+async def tx_set_transaction(transaction_id: str = "", description: str = "", amount: str = "", account_id: str = "", account_name: str = "", date: str = "", tags: str = "", transaction_type: str = "", status: str = "") -> str:
+    """Create or change a Buxfer transaction; transaction_id decides. With transaction_id, only the fields you pass are changed (leave others empty to keep them; account_name is not accepted, use account_id). Without it, a new transaction is made: description, amount and account_id or account_name are required, transaction_type defaults to expense (expense/income/transfer/loan/etc) and status to cleared (cleared/pending). Date is YYYY-MM-DD."""
+    logger.info(f"Setting transaction: {transaction_id or description}")
+
     try:
+        if transaction_id:
+            if account_name:
+                return "❌ Error: account_name only applies when creating; pass account_id to move a transaction"
+
+            data = {"id": transaction_id}
+
+            if description:
+                data["description"] = description
+            if amount:
+                data["amount"] = amount
+            if account_id:
+                data["accountId"] = account_id
+            if date:
+                data["date"] = date
+            if tags:
+                data["tags"] = tags
+            if transaction_type:
+                data["type"] = transaction_type
+            if status:
+                data["status"] = status
+
+            if len(data) == 1:
+                return "❌ Error: Provide at least one field to change"
+
+            result = await make_buxfer_request("POST", "transaction_edit", data=data)
+            if "response" in result:
+                return format_saved_transaction(result["response"], "Transaction updated successfully!", transaction_id)
+            return "❌ Error: Unexpected response format from Buxfer API"
+
         if not description:
             return "❌ Error: Description is required"
         if not amount:
             return "❌ Error: Amount is required"
         if not account_id and not account_name:
             return "❌ Error: Either account_id or account_name is required"
-        
-        # Prepare data
+
         data = {
             "description": description,
             "amount": amount,
-            "type": transaction_type,
-            "status": status
+            "type": transaction_type or "expense",
+            "status": status or "cleared"
         }
-        
+
         if account_id:
             data["accountId"] = account_id
         if account_name:
@@ -132,86 +176,18 @@ async def add_transaction(description: str = "", amount: str = "", account_id: s
             data["date"] = date
         if tags:
             data["tags"] = tags
-        
+
         result = await make_buxfer_request("POST", "transaction_add", data=data)
-        
         if "response" in result:
-            txn = result["response"]
-            response_text = "✅ Transaction added successfully!\n\n"
-            response_text += f"ID: {txn.get('id', 'N/A')}\n"
-            response_text += f"Description: {txn.get('description', 'N/A')}\n"
-            response_text += f"Amount: {fmt_amount(txn.get('amount', 0))}\n"
-            response_text += f"Type: {txn.get('type', 'N/A')}\n"
-            response_text += f"Date: {txn.get('date', 'N/A')}\n"
-            response_text += f"Account: {txn.get('accountName', 'N/A')}\n"
-            response_text += f"Status: {txn.get('status', 'N/A')}"
-            
-            if txn.get('tags'):
-                response_text += f"\nTags: {txn.get('tags')}"
-            
-            return response_text
-        
-        return "❌ Error: Unexpected response format from Buxfer API"
-        
-    except Exception as e:
-        logger.error(f"Error adding transaction: {e}")
-        return f"❌ Error: {str(e)}"
-
-@mcp.tool()
-async def edit_transaction(transaction_id: str = "", description: str = "", amount: str = "", account_id: str = "", date: str = "", tags: str = "", transaction_type: str = "", status: str = "") -> str:
-    """Edit an existing Buxfer transaction by transaction_id. Only the fields you pass are changed; leave others empty to keep them. Editable fields: description, amount, account_id, date (YYYY-MM-DD), tags, transaction_type (expense/income/transfer/loan/etc), status (cleared/pending)."""
-    logger.info(f"Editing transaction: {transaction_id}")
-
-    try:
-        if not transaction_id:
-            return "❌ Error: transaction_id is required"
-
-        data = {"id": transaction_id}
-
-        if description:
-            data["description"] = description
-        if amount:
-            data["amount"] = amount
-        if account_id:
-            data["accountId"] = account_id
-        if date:
-            data["date"] = date
-        if tags:
-            data["tags"] = tags
-        if transaction_type:
-            data["type"] = transaction_type
-        if status:
-            data["status"] = status
-
-        if len(data) == 1:
-            return "❌ Error: Provide at least one field to edit"
-
-        result = await make_buxfer_request("POST", "transaction_edit", data=data)
-
-        if "response" in result:
-            txn = result["response"]
-            response_text = "✅ Transaction updated successfully!\n\n"
-            response_text += f"ID: {txn.get('id', transaction_id)}\n"
-            response_text += f"Description: {txn.get('description', 'N/A')}\n"
-            response_text += f"Amount: {fmt_amount(txn.get('amount', 0))}\n"
-            response_text += f"Type: {txn.get('type', 'N/A')}\n"
-            response_text += f"Date: {txn.get('date', 'N/A')}\n"
-            response_text += f"Account: {txn.get('accountName', 'N/A')}\n"
-            response_text += f"Status: {txn.get('status', 'N/A')}"
-
-            if txn.get('tags'):
-                response_text += f"\nTags: {txn.get('tags')}"
-
-            return response_text
-
+            return format_saved_transaction(result["response"], "Transaction added successfully!")
         return "❌ Error: Unexpected response format from Buxfer API"
 
     except Exception as e:
-        logger.error(f"Error editing transaction: {e}")
+        logger.error(f"Error setting transaction: {e}")
         return f"❌ Error: {str(e)}"
 
-@mcp.tool()
-async def list_accounts() -> str:
+@mcp.tool(name="txAccounts")
+async def tx_accounts() -> str:
     """Get all Buxfer accounts with their current balances, IDs, banks, and last sync times."""
     logger.info("Fetching accounts list")
     
@@ -272,8 +248,8 @@ async def fetch_all_transactions(params):
 
     return transactions, num_total, total_pages > MAX_AUTO_PAGES
 
-@mcp.tool()
-async def list_transactions(account_id: str = "", account_name: str = "", tag_name: str = "", start_date: str = "", end_date: str = "", month: str = "", status: str = "", transaction_type: str = "", untagged: bool = False, page: str = "1") -> str:
+@mcp.tool(name="txTransactions")
+async def tx_transactions(account_id: str = "", account_name: str = "", tag_name: str = "", start_date: str = "", end_date: str = "", month: str = "", status: str = "", transaction_type: str = "", untagged: bool = False, page: str = "1") -> str:
     """Get transactions from Buxfer with optional filters: account_id, account_name, tag_name, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD), month (e.g. 'jan 2024'), status (pending/cleared/reconciled), transaction_type (e.g. expense/income/transfer), untagged (true to show only transactions with no tags), page number for pagination. When transaction_type or untagged is set, all pages in the date range are fetched and filtered (scope with a date range for best results)."""
     logger.info("Fetching transactions")
 
@@ -383,8 +359,8 @@ async def list_transactions(account_id: str = "", account_name: str = "", tag_na
         logger.error(f"Error listing transactions: {e}")
         return f"❌ Error: {str(e)}"
 
-@mcp.tool()
-async def list_budgets() -> str:
+@mcp.tool(name="txBudgets")
+async def tx_budgets() -> str:
     """Get all Buxfer budgets with their limits, remaining amounts, periods, and associated tags."""
     logger.info("Fetching budgets list")
 
@@ -420,8 +396,8 @@ async def list_budgets() -> str:
         logger.error(f"Error listing budgets: {e}")
         return f"❌ Error: {str(e)}"
 
-@mcp.tool()
-async def list_tags() -> str:
+@mcp.tool(name="txTags")
+async def tx_tags() -> str:
     """Get all Buxfer transaction tags with their IDs and parent tag relationships."""
     logger.info("Fetching tags list")
 

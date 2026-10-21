@@ -1,7 +1,7 @@
 # BUXFER MCP SERVER - CLAUDE INTEGRATION GUIDE
 
 ## Overview
-This MCP server provides Claude with the ability to manage Buxfer financial transactions and accounts through six tools: add_transaction, edit_transaction, list_accounts, list_transactions, list_budgets, and list_tags. The server uses token-based authentication and communicates with the Buxfer API via HTTPS.
+This MCP server provides Claude with the ability to manage Buxfer financial transactions and accounts through five tools: txSetTransaction, txAccounts, txTransactions, txBudgets, and txTags. Tool names follow the admin repo's connector standard (`docs/connector-tool-names.md`): a read is `tx` + a plural noun, and a write is one create-or-change `txSet<Thing>` where the key decides. The server uses token-based authentication and communicates with the Buxfer API via HTTPS.
 
 ## Architecture
 
@@ -36,8 +36,8 @@ POST https://www.buxfer.com/api/transaction_add?token=YOUR_TOKEN
 
 ### Tool Implementations
 
-#### 1. add_transaction
-**Purpose**: Create new financial transactions in Buxfer
+#### 1. txSetTransaction
+**Purpose**: Create or change a financial transaction in Buxfer. With `transaction_id` it patches that transaction (only the fields passed); without it, it creates one
 
 **Key Features**:
 - Supports all transaction types (expense, income, transfer, loan, etc.)
@@ -51,9 +51,9 @@ POST https://www.buxfer.com/api/transaction_add?token=YOUR_TOKEN
 - Date format: YYYY-MM-DD
 - Status: cleared or pending
 
-**API Endpoint**: `POST /api/transaction_add`
+**API Endpoint**: `POST /api/transaction_add` (create), `POST /api/transaction_edit` (change)
 
-#### 2. list_accounts
+#### 2. txAccounts
 **Purpose**: Retrieve all user accounts with current balances
 
 **Key Features**:
@@ -70,7 +70,7 @@ POST https://www.buxfer.com/api/transaction_add?token=YOUR_TOKEN
 
 **API Endpoint**: `GET /api/accounts`
 
-#### 3. list_transactions
+#### 3. txTransactions
 **Purpose**: Query transactions with extensive filtering options
 
 **Key Features**:
@@ -174,17 +174,17 @@ All tools return formatted strings with:
 
 ### When to Use Each Tool
 
-**Use add_transaction when**:
+**Use txSetTransaction when**:
 - User wants to record a new expense or income
 - User mentions spending, earning, or financial activity
 - User describes a transaction that needs logging
 
-**Use list_accounts when**:
+**Use txAccounts when**:
 - User asks about their financial accounts
 - User wants to see balances
 - User needs account IDs for transaction creation
 
-**Use list_transactions when**:
+**Use txTransactions when**:
 - User wants to review past transactions
 - User asks about spending history
 - User needs to find specific transactions
@@ -216,7 +216,7 @@ All tools return formatted strings with:
 - Rate limiting may apply (not documented)
 
 ### Server Limitations
-- Read-only for most endpoints (except add_transaction and edit_transaction)
+- Read-only for most endpoints (except txSetTransaction)
 - No transaction deletion in current version
 - No reminder management
 - No loan/group/contact management
